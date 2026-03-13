@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Boat Grid Multiplayer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e5e7eb;
+        }
+
+        .wrap {
+            display: grid;
+            grid-template-columns: 320px 1fr 360px;
+            gap: 12px;
+            padding: 12px;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .panel {
+            background: #1e293b;
+            border-radius: 10px;
+            padding: 12px;
+            box-sizing: border-box;
+        }
+
+        h2,
+        h3 {
+            margin-top: 0;
+        }
+
+        input,
+        select,
+        button {
+            width: 100%;
+            margin: 6px 0;
+            padding: 8px;
+            border-radius: 8px;
+            border: none;
+            box-sizing: border-box;
+        }
+
+        button {
+            cursor: pointer;
+            background: #2563eb;
+            color: white;
+            font-weight: bold;
+        }
+
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+
+        #grid {
+            display: grid;
+            gap: 2px;
+            justify-content: start;
+            align-content: start;
+            background: #334155;
+            padding: 6px;
+            border-radius: 8px;
+            width: fit-content;
+        }
+
+        .cell {
+            width: 44px;
+            height: 44px;
+            background: #cbd5e1;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            text-align: center;
+            border-radius: 4px;
+            user-select: none;
+        }
+
+        .boat {
+            background: #93c5fd;
+            font-weight: bold;
+        }
+
+        .me {
+            outline: 3px solid #f59e0b;
+        }
+
+        .dead {
+            background: #ef4444;
+            color: white;
+        }
+
+        .turn {
+            color: #22c55e;
+            font-weight: bold;
+        }
+
+        .log {
+            max-height: 70vh;
+            overflow: auto;
+            background: #0f172a;
+            border-radius: 8px;
+            padding: 8px;
+        }
+
+        .log div {
+            padding: 4px 0;
+            border-bottom: 1px solid #1e293b;
+            font-size: 14px;
+        }
+
+        .playerCard {
+            background: #0f172a;
+            padding: 8px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .small {
+            font-size: 13px;
+            color: #cbd5e1;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <div class="panel">
+            <h2>Setup</h2>
+            <input id="nameInput" placeholder="Your name" />
+            <button id="setNameBtn">Set Name</button>
+
+            <select id="boatSelect">
+                <option value="">Choose boat</option>
+                <option value="speedboat">Speedboat L1</option>
+                <option value="armorboat">Armorboat L1</option>
+                <option value="fireboat">Fire-PowerBoat L1</option>
+            </select>
+            <button id="chooseBoatBtn">Lock Boat</button>
+            <button id="startBtn">Start Game</button>
+
+            <h3>Controls</h3>
+            <button id="rollMoveBtn">Roll Move</button>
+            <button id="fortifyBtn">Fortify</button>
+            <button id="endTurnBtn">End Turn</button>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;">
+                <button id="upBtn">Up</button>
+                <button id="downBtn">Down</button>
+                <button id="leftBtn">Left</button>
+                <button id="rightBtn">Right</button>
+            </div>
+
+            <h3>Attack</h3>
+            <select id="targetSelect"></select>
+            <button id="attackBtn">Attack Target</button>
+
+            <p class="small" id="statusText">Connecting...</p>
+            <p class="small" id="messageText"></p>
+        </div>
+
+        <div class="panel">
+            <h2>Map</h2>
+            <div id="grid"></div>
+        </div>
+
+        <div class="panel">
+            <h2>Players</h2>
+            <div id="players"></div>
+
+            <h2>Log</h2>
+            <div class="log" id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        let state = null;
+        let myId = null;
+
+        const gridEl = document.getElementById("grid");
+        const playersEl = document.getElementById("players");
+        const logEl = document.getElementById("log");
+        const statusText = document.getElementById("statusText");
+        const messageText = document.getElementById("messageText");
+
+        document.getElementById("setNameBtn").onclick = () => {
+            const val = document.getElementById("nameInput").value.trim();
+            if (val) socket.emit("setName", val);
+        };
+
+        document.getElementById("chooseBoatBtn").onclick = () => {
+            const val = document.getElementById("boatSelect").value;
+            if (val) socket.emit("chooseBoat", val);
+        };
+
+        document.getElementById("startBtn").onclick = () => {
+            socket.emit("startGame");
+        };
+
+        document.getElementById("rollMoveBtn").onclick = () => socket.emit("rollMove");
+        document.getElementById("fortifyBtn").onclick = () => socket.emit("fortify");
+        document.getElementById("endTurnBtn").onclick = () => socket.emit("endTurn");
+
+        document.getElementById("upBtn").onclick = () => socket.emit("move", "up");
+        document.getElementById("downBtn").onclick = () => socket.emit("move", "down");
+        document.getElementById("leftBtn").onclick = () => socket.emit("move", "left");
+        document.getElementById("rightBtn").onclick = () => socket.emit("move", "right");
+
+        document.getElementById("attackBtn").onclick = () => {
+            const targetId = document.getElementById("targetSelect").value;
+            if (targetId) socket.emit("attack", targetId);
+        };
+
+        socket.on("connect", () => {
+            myId = socket.id;
+            statusText.textContent = `Connected as ${myId}`;
+        });
+
+        socket.on("message", (msg) => {
+            messageText.textContent = msg;
+            setTimeout(() => {
+                if (messageText.textContent === msg) messageText.textContent = "";
+            }, 3000);
+        });
+
+        socket.on("state", (newState) => {
+            state = newState;
+            render();
+        });
+
+        function render() {
+            if (!state) return;
+
+            renderGrid();
+            renderPlayers();
+            renderLog();
+            renderTargets();
+
+            const isMyTurn = state.currentTurnId === myId;
+            const me = state.players[myId];
+            const canAct = isMyTurn && !!me && me.hp > 0 && (me.actionsLeft || 0) > 0;
+
+            statusText.textContent = state.started
+                ? (isMyTurn ? `Your turn (${me?.actionsLeft || 0} actions left)` : "Waiting for another player's turn")
+                : "Lobby / setup";
+
+            document.getElementById("rollMoveBtn").disabled = !canAct;
+            document.getElementById("fortifyBtn").disabled = !canAct;
+            document.getElementById("endTurnBtn").disabled = !isMyTurn;
+            document.getElementById("attackBtn").disabled = !canAct;
+            document.getElementById("upBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
+            document.getElementById("downBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
+            document.getElementById("leftBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
+            document.getElementById("rightBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
+        }
+
+        function renderGrid() {
+            gridEl.innerHTML = "";
+            gridEl.style.gridTemplateColumns = `repeat(${state.gridW}, 44px)`;
+
+            for (let y = 0; y < state.gridH; y++) {
+                for (let x = 0; x < state.gridW; x++) {
+                    const cell = document.createElement("div");
+                    cell.className = "cell";
+                    cell.textContent = `${x},${y}`;
+
+                    const playerHere = Object.values(state.players).find(
+                        (p) => p.hp > 0 && p.x === x && p.y === y
+                    );
+
+                    if (playerHere) {
+                        cell.classList.add("boat");
+                        if (playerHere.id === myId) cell.classList.add("me");
+                        if (playerHere.hp <= 0) cell.classList.add("dead");
+                        cell.innerHTML = `
+              <div>
+                <div>${escapeHtml(playerHere.name)}</div>
+                <div>${playerHere.hp} HP</div>
+              </div>
+            `;
+                    }
+
+                    gridEl.appendChild(cell);
+                }
+            }
+        }
+
+        function renderPlayers() {
+            playersEl.innerHTML = "";
+            Object.values(state.players).forEach((p) => {
+                const div = document.createElement("div");
+                div.className = "playerCard";
+
+                const turnBadge = p.id === state.currentTurnId ? `<span class="turn">[TURN]</span>` : "";
+                const mine = p.id === myId ? " (You)" : "";
+
+                div.innerHTML = `
+          <strong>${escapeHtml(p.name)}${mine}</strong> ${turnBadge}<br>
+          <span class="small">${escapeHtml(p.boatName || "No boat selected")}</span><br>
+          <span class="small">HP: ${p.hp}/${p.maxHp || 0}</span><br>
+          <span class="small">Shield: ${p.shield || 0}</span><br>
+          <span class="small">Armor: ${p.armor || 0} | Speed: ${p.speed || 0} | FirePower: ${p.firepower || 0} | AC: ${p.ac || 0}</span><br>
+          <span class="small">Pos: (${p.x}, ${p.y}) | Move left: ${p.movePoints || 0} | Actions left: ${p.actionsLeft || 0}/2</span>
+        `;
+                playersEl.appendChild(div);
+            });
+        }
+
+        function renderLog() {
+            logEl.innerHTML = "";
+            state.log.forEach((line) => {
+                const div = document.createElement("div");
+                div.textContent = line;
+                logEl.appendChild(div);
+            });
+        }
+
+        function renderTargets() {
+            const targetSelect = document.getElementById("targetSelect");
+            targetSelect.innerHTML = "";
+
+            Object.values(state.players)
+                .filter((p) => p.id !== myId && p.hp > 0)
+                .forEach((p) => {
+                    const opt = document.createElement("option");
+                    opt.value = p.id;
+                    opt.textContent = `${p.name} (${p.boatName || "No boat"})`;
+                    targetSelect.appendChild(opt);
+                });
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#039;");
+        }
+    </script>
+</body>
+
+</html>

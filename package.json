@@ -1,0 +1,15 @@
+{
+    "name": "boat-grid-multiplayer",
+    "version": "1.0.0",
+    "description": "Grid boat multiplayer game",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "tunnel": "npx localtunnel --port 3000 --local-host 127.0.0.1",
+        "tunnel:subdomain": "npx localtunnel --port 3000 --local-host 127.0.0.1 --subdomain boat-game-demo"
+    },
+    "dependencies": {
+        "express": "^4.19.2",
+        "socket.io": "^4.7.5"
+    }
+}
