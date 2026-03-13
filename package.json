@@ -5,6 +5,7 @@
     "main": "server.js",
     "scripts": {
         "start": "node server.js",
+        "start:ui": "node launcher/tui.js",
         "tunnel": "npx localtunnel --port 3000 --local-host 127.0.0.1",
         "tunnel:subdomain": "npx localtunnel --port 3000 --local-host 127.0.0.1 --subdomain boat-game-demo"
     },

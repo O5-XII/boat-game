@@ -1,0 +1,65 @@
+name: Build And Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --omit=dev
+
+      - name: Build platform bundles
+        run: |
+          chmod +x "Boat Game Launcher.command"
+
+          mkdir -p dist/boat-game-macos
+          cp -r \
+            server.js \
+            public \
+            launcher \
+            package.json \
+            package-lock.json \
+            node_modules \
+            "Boat Game Launcher.command" \
+            "README-RELEASE.txt" \
+            dist/boat-game-macos/
+
+          mkdir -p dist/boat-game-windows
+          cp -r \
+            server.js \
+            public \
+            launcher \
+            package.json \
+            package-lock.json \
+            node_modules \
+            "Boat Game Launcher.bat" \
+            "README-RELEASE.txt" \
+            dist/boat-game-windows/
+
+          cd dist
+          zip -r boat-game-macos.zip boat-game-macos
+          zip -r boat-game-windows.zip boat-game-windows
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/boat-game-macos.zip
+            dist/boat-game-windows.zip
+          generate_release_notes: true
