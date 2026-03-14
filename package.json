@@ -5,12 +5,11 @@
     "main": "server.js",
     "scripts": {
         "start": "node server.js",
-        "start:ui": "node launcher/tui.js",
-        "tunnel": "npx localtunnel --port 3000 --local-host 127.0.0.1",
-        "tunnel:subdomain": "npx localtunnel --port 3000 --local-host 127.0.0.1 --subdomain boat-game-demo"
+        "start:ui": "node launcher/tui.js"
     },
     "dependencies": {
         "express": "^4.19.2",
+        "localtunnel": "^2.0.2",
         "socket.io": "^4.7.5"
     }
 }

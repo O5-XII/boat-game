@@ -7,7 +7,7 @@ Quick start (no terminal commands needed)
 2) Download the correct release asset:
    - macOS: boat-game-macos.zip
    - Windows: boat-game-windows.zip
-3) Extract the zip.
+3) Extract the zip. No npm install step is needed for the release build.
 4) Start with the launcher file:
    - macOS: Boat Game Launcher.command
    - Windows: Boat Game Launcher.bat

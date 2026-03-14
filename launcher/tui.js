@@ -6,8 +6,8 @@ const readline = require("readline");
 const { spawn } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const NPM_BIN = process.platform === "win32" ? "npm.cmd" : "npm";
 const NODE_MODULES_DIR = path.join(ROOT, "node_modules");
+const SERVER_ENTRY = path.join(ROOT, "server.js");
 
 const runningChildren = [];
 
@@ -66,11 +66,12 @@ function pipePrefixed(stream, label, isError = false) {
     });
 }
 
-function spawnNpm(args, label) {
-    const child = spawn(NPM_BIN, args, {
+function spawnNode(scriptPath, scriptArgs, label) {
+    const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
         cwd: ROOT,
         env: process.env,
-        stdio: ["inherit", "pipe", "pipe"]
+        // In Windows batch-launched terminals, inheriting stdin can throw spawn EINVAL.
+        stdio: ["ignore", "pipe", "pipe"]
     });
 
     pipePrefixed(child.stdout, label);
@@ -82,10 +83,12 @@ function spawnNpm(args, label) {
 
 function runNpmBlocking(args, label) {
     return new Promise((resolve, reject) => {
-        const child = spawn(NPM_BIN, args, {
+        const command = process.platform === "win32" ? "npm.cmd" : "npm";
+        const child = spawn(command, args, {
             cwd: ROOT,
             env: process.env,
-            stdio: "inherit"
+            // Keep output visible, but don't inherit stdin on Windows launcher consoles.
+            stdio: ["ignore", "inherit", "inherit"]
         });
 
         child.on("error", reject);
@@ -96,11 +99,34 @@ function runNpmBlocking(args, label) {
     });
 }
 
-async function ensureDependencies() {
-    if (fs.existsSync(NODE_MODULES_DIR)) return;
+function hasModule(moduleName) {
+    try {
+        require.resolve(moduleName, { paths: [ROOT] });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function ensureBaseDependencies() {
+    if (
+        fs.existsSync(NODE_MODULES_DIR) &&
+        hasModule("express") &&
+        hasModule("socket.io")
+    ) {
+        return;
+    }
 
     console.log("First run setup: installing dependencies...");
     await runNpmBlocking(["install"], "npm install");
+}
+
+function getLocalTunnelEntry() {
+    try {
+        return require.resolve("localtunnel/bin/lt", { paths: [ROOT] });
+    } catch {
+        return null;
+    }
 }
 
 function watchForExit(child, label) {
@@ -134,7 +160,7 @@ function registerShutdownHandlers() {
 
 async function startLocalOnly() {
     console.log("Starting server...");
-    const server = spawnNpm(["start"], "server");
+    const server = spawnNode(SERVER_ENTRY, [], "server");
     watchForExit(server, "server");
 
     setTimeout(() => {
@@ -145,10 +171,24 @@ async function startLocalOnly() {
 
 async function startWithTunnel() {
     console.log("Starting server and LocalTunnel...");
-    const server = spawnNpm(["start"], "server");
+
+    const tunnelEntry = getLocalTunnelEntry();
+    if (!tunnelEntry) {
+        console.log("LocalTunnel is not installed in this copy yet.");
+        console.log("Starting local play only.");
+        console.log("If you're running from source, run `npm install` once to enable online sharing.");
+        await startLocalOnly();
+        return;
+    }
+
+    const server = spawnNode(SERVER_ENTRY, [], "server");
     watchForExit(server, "server");
 
-    const tunnel = spawnNpm(["run", "tunnel"], "tunnel");
+    const tunnel = spawnNode(
+        tunnelEntry,
+        ["--port", "3000", "--local-host", "127.0.0.1"],
+        "tunnel"
+    );
     watchForExit(tunnel, "tunnel");
 
     tunnel.stdout.on("data", (chunk) => {
@@ -176,7 +216,7 @@ async function main() {
         process.exit(1);
     }
 
-    await ensureDependencies();
+    await ensureBaseDependencies();
 
     const rl = readline.createInterface({
         input: process.stdin,
