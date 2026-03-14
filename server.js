@@ -1,13 +1,18 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const localtunnel = require("localtunnel");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+const CLI_ARGS = new Set(process.argv.slice(2));
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_ACTIONS_PER_TURN = 2;
+const DEBUG_ENABLED = CLI_ARGS.has("--debug-enabled");
+const TUNNEL_ENABLED = CLI_ARGS.has("--tunnel");
+let activeTunnel = null;
 
 app.use(express.static("public"));
 
@@ -46,19 +51,40 @@ const game = {
     turnOrder: [],     // socket ids
     currentTurnIndex: 0,
     started: false,
-    log: ["Waiting for players..."]
+    log: ["Waiting for players..."],
+    debugEnabled: DEBUG_ENABLED,
+    debug: {
+        riggedD6: [],
+        riggedD20: []
+    }
 };
 
 function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function clampInt(value, min, max) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return min;
+    const truncated = Math.trunc(parsed);
+    return Math.min(max, Math.max(min, truncated));
+}
+
+function consumeRiggedRoll(queueKey, min, max, label) {
+    const queue = game.debug[queueKey];
+    if (!Array.isArray(queue) || queue.length === 0) return null;
+
+    const rigged = clampInt(queue.shift(), min, max);
+    game.log.unshift(`DEBUG: rigged ${label} roll resolved as ${rigged}.`);
+    return rigged;
+}
+
 function d6() {
-    return randInt(1, 6);
+    return consumeRiggedRoll("riggedD6", 1, 6, "d6") ?? randInt(1, 6);
 }
 
 function d20() {
-    return randInt(1, 20);
+    return consumeRiggedRoll("riggedD20", 1, 20, "d20") ?? randInt(1, 20);
 }
 
 function currentTurnId() {
@@ -139,7 +165,12 @@ function sanitizeGame() {
         currentTurnId: currentTurnId(),
         turnOrder: game.turnOrder,
         players: game.players,
-        log: game.log.slice(0, 20)
+        log: game.log.slice(0, 20),
+        debug: {
+            enabled: game.debugEnabled,
+            riggedD6: game.debugEnabled ? [...game.debug.riggedD6] : [],
+            riggedD20: game.debugEnabled ? [...game.debug.riggedD20] : []
+        }
     };
 }
 
@@ -165,6 +196,128 @@ function occupied(x, y, ignoreId = null) {
         return p.hp > 0 && p.x === x && p.y === y;
     });
 }
+
+function debugDenied(socket) {
+    socket.emit("message", "Debug mode is only available from a manual CLI launch.");
+}
+
+function debugActorName(socket) {
+    return game.players[socket.id]?.name || `Socket ${socket.id}`;
+}
+
+function maybeResolveDebugStateChange() {
+    if (!game.started) {
+        broadcastState();
+        return;
+    }
+
+    if (livingPlayers().length <= 1 || !isAlive(game.players[currentTurnId()])) {
+        nextTurn();
+        return;
+    }
+
+    broadcastState();
+}
+
+function setCurrentTurnTo(playerId) {
+    const turnIndex = game.turnOrder.indexOf(playerId);
+    if (turnIndex === -1) return false;
+
+    game.currentTurnIndex = turnIndex;
+
+    const player = game.players[playerId];
+    if (player) {
+        player.movePoints = 0;
+        player.actionsLeft = MAX_ACTIONS_PER_TURN;
+        player.hasRolledMoveThisTurn = false;
+    }
+
+    return true;
+}
+
+function applyDebugStatUpdate(player, updates) {
+    const next = {
+        armor: player.armor,
+        speed: player.speed,
+        firepower: player.firepower,
+        ac: player.ac,
+        maxHp: player.maxHp,
+        hp: player.hp,
+        shield: player.shield,
+        movePoints: player.movePoints,
+        actionsLeft: player.actionsLeft,
+        x: player.x,
+        y: player.y
+    };
+
+    if (Object.prototype.hasOwnProperty.call(updates, "armor")) next.armor = Math.max(0, clampInt(updates.armor, 0, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "speed")) next.speed = Math.max(0, clampInt(updates.speed, 0, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "firepower")) next.firepower = Math.max(0, clampInt(updates.firepower, 0, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "ac")) next.ac = Math.max(0, clampInt(updates.ac, 0, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "maxHp")) next.maxHp = Math.max(1, clampInt(updates.maxHp, 1, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "hp")) next.hp = clampInt(updates.hp, 0, next.maxHp);
+    if (Object.prototype.hasOwnProperty.call(updates, "shield")) next.shield = Math.max(0, clampInt(updates.shield, 0, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "movePoints")) next.movePoints = Math.max(0, clampInt(updates.movePoints, 0, 999));
+    if (Object.prototype.hasOwnProperty.call(updates, "actionsLeft")) next.actionsLeft = Math.max(0, clampInt(updates.actionsLeft, 0, 99));
+    if (Object.prototype.hasOwnProperty.call(updates, "x")) next.x = clampInt(updates.x, 0, GRID_W - 1);
+    if (Object.prototype.hasOwnProperty.call(updates, "y")) next.y = clampInt(updates.y, 0, GRID_H - 1);
+
+    next.hp = clampInt(next.hp, 0, next.maxHp);
+
+    if (next.hp > 0 && occupied(next.x, next.y, player.id)) {
+        return {
+            ok: false,
+            message: "Debug move blocked because that tile is already occupied."
+        };
+    }
+
+    const changed = Object.keys(next)
+        .filter((key) => player[key] !== next[key])
+        .map((key) => `${key}=${next[key]}`);
+
+    Object.assign(player, next);
+    if (player.hp <= 0) {
+        player.movePoints = 0;
+        player.actionsLeft = 0;
+        player.hasRolledMoveThisTurn = false;
+    }
+
+    return {
+        ok: true,
+        changed
+    };
+}
+
+async function startTunnelIfRequested() {
+    if (!TUNNEL_ENABLED) return;
+
+    try {
+        activeTunnel = await localtunnel({
+            port: PORT,
+            local_host: "127.0.0.1"
+        });
+        console.log(`LocalTunnel share URL: ${activeTunnel.url}`);
+        activeTunnel.on("close", () => {
+            console.log("LocalTunnel closed.");
+            activeTunnel = null;
+        });
+        activeTunnel.on("error", (err) => {
+            console.error(`LocalTunnel error: ${err.message}`);
+        });
+    } catch (err) {
+        console.error(`Failed to start LocalTunnel: ${err.message}`);
+    }
+}
+
+function closeTunnel() {
+    if (!activeTunnel) return;
+    activeTunnel.close();
+    activeTunnel = null;
+}
+
+process.on("SIGINT", closeTunnel);
+process.on("SIGTERM", closeTunnel);
+process.on("exit", closeTunnel);
 
 io.on("connection", (socket) => {
     game.players[socket.id] = {
@@ -403,6 +556,122 @@ io.on("connection", (socket) => {
         nextTurn();
     });
 
+    socket.on("debugCommand", (payload) => {
+        if (!game.debugEnabled) {
+            debugDenied(socket);
+            return;
+        }
+
+        if (!payload || typeof payload !== "object") return;
+
+        const actor = debugActorName(socket);
+        const type = payload.type;
+
+        if (type === "rigDice") {
+            const dieType = payload.dieType === "d20" ? "d20" : "d6";
+            const maxValue = dieType === "d20" ? 20 : 6;
+            const count = clampInt(payload.count ?? 1, 1, 20);
+            const value = clampInt(payload.value, 1, maxValue);
+            const queueKey = dieType === "d20" ? "riggedD20" : "riggedD6";
+
+            for (let i = 0; i < count; i++) {
+                game.debug[queueKey].push(value);
+            }
+
+            game.log.unshift(`DEBUG: ${actor} queued ${count} ${dieType} roll(s) at ${value}.`);
+            broadcastState();
+            return;
+        }
+
+        if (type === "clearRiggedDice") {
+            if (payload.dieType === "d20") {
+                game.debug.riggedD20 = [];
+                game.log.unshift(`DEBUG: ${actor} cleared all queued d20 rolls.`);
+            } else if (payload.dieType === "d6") {
+                game.debug.riggedD6 = [];
+                game.log.unshift(`DEBUG: ${actor} cleared all queued d6 rolls.`);
+            } else {
+                game.debug.riggedD6 = [];
+                game.debug.riggedD20 = [];
+                game.log.unshift(`DEBUG: ${actor} cleared all queued rigged dice.`);
+            }
+            broadcastState();
+            return;
+        }
+
+        const target = game.players[payload.playerId];
+        if (!target) {
+            socket.emit("message", "Debug target not found.");
+            return;
+        }
+
+        if (type === "setPlayerStats") {
+            const result = applyDebugStatUpdate(target, payload.updates || {});
+            if (!result.ok) {
+                socket.emit("message", result.message);
+                return;
+            }
+
+            const summary = result.changed.length > 0 ? result.changed.join(", ") : "no stat changes";
+            game.log.unshift(`DEBUG: ${actor} updated ${target.name}: ${summary}.`);
+            maybeResolveDebugStateChange();
+            return;
+        }
+
+        if (type === "fullHealPlayer") {
+            target.hp = target.maxHp;
+            game.log.unshift(`DEBUG: ${actor} fully repaired ${target.name}.`);
+            maybeResolveDebugStateChange();
+            return;
+        }
+
+        if (type === "resetPlayerResources") {
+            target.shield = 0;
+            target.movePoints = 0;
+            target.actionsLeft = MAX_ACTIONS_PER_TURN;
+            target.hasRolledMoveThisTurn = false;
+            game.log.unshift(`DEBUG: ${actor} reset ${target.name}'s combat resources.`);
+            maybeResolveDebugStateChange();
+            return;
+        }
+
+        if (type === "sinkPlayer") {
+            target.hp = 0;
+            target.movePoints = 0;
+            target.actionsLeft = 0;
+            target.hasRolledMoveThisTurn = false;
+            game.log.unshift(`DEBUG: ${actor} sank ${target.name}.`);
+            maybeResolveDebugStateChange();
+            return;
+        }
+
+        if (type === "revivePlayer") {
+            target.hp = Math.max(1, target.maxHp || 1);
+            target.actionsLeft = Math.max(target.actionsLeft || 0, MAX_ACTIONS_PER_TURN);
+            game.log.unshift(`DEBUG: ${actor} revived ${target.name}.`);
+            maybeResolveDebugStateChange();
+            return;
+        }
+
+        if (type === "setCurrentTurn") {
+            if (!game.started) {
+                socket.emit("message", "Start the game before forcing turns.");
+                return;
+            }
+            if (!isAlive(target)) {
+                socket.emit("message", "Cannot pass the turn to a sunk player.");
+                return;
+            }
+            if (!setCurrentTurnTo(target.id)) {
+                socket.emit("message", "That player is not part of the current turn order.");
+                return;
+            }
+
+            game.log.unshift(`DEBUG: ${actor} forced the turn to ${target.name}.`);
+            broadcastState();
+        }
+    });
+
     socket.on("disconnect", () => {
         const player = game.players[socket.id];
         if (player) {
@@ -426,6 +695,10 @@ io.on("connection", (socket) => {
     });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`Boat game server running on http://0.0.0.0:${PORT}`);
+    if (DEBUG_ENABLED) {
+        console.log("Debug menu is enabled for this manual launch.");
+    }
+    await startTunnelIfRequested();
 });

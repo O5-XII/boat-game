@@ -4,7 +4,8 @@
     "description": "Grid boat multiplayer game",
     "main": "server.js",
     "scripts": {
-        "start": "node server.js",
+        "start": "node server.js --debug-enabled",
+        "tunnel": "node server.js --debug-enabled --tunnel",
         "start:ui": "node launcher/tui.js"
     },
     "dependencies": {

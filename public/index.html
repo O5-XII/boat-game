@@ -127,6 +127,93 @@
             font-size: 13px;
             color: #cbd5e1;
         }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .attackMeta {
+            margin-top: 8px;
+            padding: 8px;
+            border-radius: 8px;
+            background: #0f172a;
+        }
+
+        .rangeCell {
+            background: #d9f99d;
+            box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.7);
+        }
+
+        .rangeEnemyInRange {
+            box-shadow: inset 0 0 0 3px #22c55e;
+        }
+
+        .rangeEnemyOut {
+            box-shadow: inset 0 0 0 3px #ef4444;
+        }
+
+        .selectedTarget {
+            outline: 3px solid #f59e0b;
+            outline-offset: -3px;
+        }
+
+        .debugOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 24px;
+            overflow: auto;
+            background: rgba(2, 6, 23, 0.76);
+            box-sizing: border-box;
+        }
+
+        .debugModal {
+            width: min(920px, 100%);
+            background: #111827;
+            border: 1px solid #334155;
+            border-radius: 14px;
+            padding: 16px;
+            box-sizing: border-box;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.65);
+        }
+
+        .debugHeader {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .debugSection {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 10px;
+            background: #0f172a;
+        }
+
+        .debugFormGrid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 8px;
+        }
+
+        .debugActionRow {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .secondaryBtn {
+            background: #475569;
+        }
+
+        .dangerBtn {
+            background: #dc2626;
+        }
     </style>
 </head>
 
@@ -161,6 +248,9 @@
             <h3>Attack</h3>
             <select id="targetSelect"></select>
             <button id="attackBtn">Attack Target</button>
+            <div class="attackMeta">
+                <p class="small" id="rangeText">Max range: -</p>
+            </div>
 
             <p class="small" id="statusText">Connecting...</p>
             <p class="small" id="messageText"></p>
@@ -180,17 +270,85 @@
         </div>
     </div>
 
+    <div class="debugOverlay hidden" id="debugOverlay">
+        <div class="debugModal">
+            <div class="debugHeader">
+                <h2>Debug Menu</h2>
+                <button id="debugCloseBtn" class="secondaryBtn">Close</button>
+            </div>
+
+            <p class="small" id="debugStatusText">Debug tools are unavailable for this session.</p>
+
+            <div class="debugSection">
+                <h3>Dice Rigging</h3>
+                <div class="debugFormGrid">
+                    <select id="debugRigDie">
+                        <option value="d6">d6</option>
+                        <option value="d20">d20</option>
+                    </select>
+                    <input id="debugRigValue" type="number" min="1" step="1" placeholder="Value" />
+                    <input id="debugRigCount" type="number" min="1" step="1" value="1" placeholder="Count" />
+                </div>
+                <div class="debugActionRow">
+                    <button id="debugQueueRigBtn">Queue Rigged Roll</button>
+                    <button id="debugClearRigBtn" class="secondaryBtn">Clear All Rigging</button>
+                </div>
+            </div>
+
+            <div class="debugSection">
+                <h3>Player Editor</h3>
+                <select id="debugPlayerSelect"></select>
+                <div class="debugFormGrid">
+                    <input id="debugArmorInput" type="number" step="1" placeholder="Armor" />
+                    <input id="debugSpeedInput" type="number" step="1" placeholder="Speed" />
+                    <input id="debugFirepowerInput" type="number" step="1" placeholder="Firepower" />
+                    <input id="debugAcInput" type="number" step="1" placeholder="AC" />
+                    <input id="debugMaxHpInput" type="number" step="1" placeholder="Max HP" />
+                    <input id="debugHpInput" type="number" step="1" placeholder="HP" />
+                    <input id="debugShieldInput" type="number" step="1" placeholder="Shield" />
+                    <input id="debugMovePointsInput" type="number" step="1" placeholder="Move Points" />
+                    <input id="debugActionsInput" type="number" step="1" placeholder="Actions Left" />
+                    <input id="debugXInput" type="number" step="1" placeholder="X" />
+                    <input id="debugYInput" type="number" step="1" placeholder="Y" />
+                </div>
+                <div class="debugActionRow">
+                    <button id="debugApplyStatsBtn">Apply Stats</button>
+                    <button id="debugSetTurnBtn" class="secondaryBtn">Force Turn</button>
+                </div>
+                <div class="debugActionRow">
+                    <button id="debugFullHealBtn" class="secondaryBtn">Full Heal</button>
+                    <button id="debugResetResourcesBtn" class="secondaryBtn">Reset Resources</button>
+                </div>
+                <div class="debugActionRow">
+                    <button id="debugReviveBtn" class="secondaryBtn">Revive</button>
+                    <button id="debugSinkBtn" class="dangerBtn">Sink</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const socket = io();
 
         let state = null;
         let myId = null;
+        let debugMenuOpen = false;
+        let debugSequence = "";
+        let debugLoadedPlayerId = null;
 
         const gridEl = document.getElementById("grid");
         const playersEl = document.getElementById("players");
         const logEl = document.getElementById("log");
         const statusText = document.getElementById("statusText");
         const messageText = document.getElementById("messageText");
+        const targetSelect = document.getElementById("targetSelect");
+        const attackBtn = document.getElementById("attackBtn");
+        const rangeText = document.getElementById("rangeText");
+        const debugOverlay = document.getElementById("debugOverlay");
+        const debugStatusText = document.getElementById("debugStatusText");
+        const debugCloseBtn = document.getElementById("debugCloseBtn");
+        const debugPlayerSelect = document.getElementById("debugPlayerSelect");
+        const debugRigDie = document.getElementById("debugRigDie");
 
         document.getElementById("setNameBtn").onclick = () => {
             const val = document.getElementById("nameInput").value.trim();
@@ -215,10 +373,92 @@
         document.getElementById("leftBtn").onclick = () => socket.emit("move", "left");
         document.getElementById("rightBtn").onclick = () => socket.emit("move", "right");
 
-        document.getElementById("attackBtn").onclick = () => {
-            const targetId = document.getElementById("targetSelect").value;
+        attackBtn.onclick = () => {
+            const targetId = targetSelect.value;
             if (targetId) socket.emit("attack", targetId);
         };
+
+        targetSelect.onchange = () => {
+            if (!state) return;
+            renderRangeInfo();
+            renderGrid();
+        };
+
+        debugCloseBtn.onclick = () => {
+            debugMenuOpen = false;
+            renderDebugPanel(true);
+        };
+
+        document.getElementById("debugQueueRigBtn").onclick = () => {
+            const dieType = debugRigDie.value === "d20" ? "d20" : "d6";
+            const defaultMax = dieType === "d20" ? 20 : 6;
+            const value = readNumericInput("debugRigValue") ?? defaultMax;
+            const count = readNumericInput("debugRigCount") ?? 1;
+            emitDebugCommand({
+                type: "rigDice",
+                dieType,
+                value,
+                count
+            });
+        };
+
+        document.getElementById("debugClearRigBtn").onclick = () => {
+            emitDebugCommand({ type: "clearRiggedDice" });
+        };
+
+        debugPlayerSelect.onchange = () => {
+            debugLoadedPlayerId = null;
+            syncDebugPlayerEditor(true);
+        };
+
+        document.getElementById("debugApplyStatsBtn").onclick = () => {
+            const playerId = debugPlayerSelect.value;
+            if (!playerId) return;
+
+            const updates = {};
+            addDebugUpdate(updates, "armor", "debugArmorInput");
+            addDebugUpdate(updates, "speed", "debugSpeedInput");
+            addDebugUpdate(updates, "firepower", "debugFirepowerInput");
+            addDebugUpdate(updates, "ac", "debugAcInput");
+            addDebugUpdate(updates, "maxHp", "debugMaxHpInput");
+            addDebugUpdate(updates, "hp", "debugHpInput");
+            addDebugUpdate(updates, "shield", "debugShieldInput");
+            addDebugUpdate(updates, "movePoints", "debugMovePointsInput");
+            addDebugUpdate(updates, "actionsLeft", "debugActionsInput");
+            addDebugUpdate(updates, "x", "debugXInput");
+            addDebugUpdate(updates, "y", "debugYInput");
+
+            emitDebugCommand({
+                type: "setPlayerStats",
+                playerId,
+                updates
+            });
+        };
+
+        document.getElementById("debugSetTurnBtn").onclick = () => emitDebugPlayerCommand("setCurrentTurn");
+        document.getElementById("debugFullHealBtn").onclick = () => emitDebugPlayerCommand("fullHealPlayer");
+        document.getElementById("debugResetResourcesBtn").onclick = () => emitDebugPlayerCommand("resetPlayerResources");
+        document.getElementById("debugReviveBtn").onclick = () => emitDebugPlayerCommand("revivePlayer");
+        document.getElementById("debugSinkBtn").onclick = () => emitDebugPlayerCommand("sinkPlayer");
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && debugMenuOpen) {
+                debugMenuOpen = false;
+                renderDebugPanel(true);
+                return;
+            }
+
+            if (!state?.debug?.enabled) return;
+            if (event.ctrlKey || event.altKey || event.metaKey) return;
+            if (event.key.length !== 1) return;
+
+            debugSequence = `${debugSequence}${event.key.toLowerCase()}`.slice(-3);
+            if (debugSequence === "dbg") {
+                debugSequence = "";
+                debugMenuOpen = !debugMenuOpen;
+                renderDebugPanel(true);
+            }
+        });
 
         socket.on("connect", () => {
             myId = socket.id;
@@ -240,14 +480,17 @@
         function render() {
             if (!state) return;
 
+            renderTargets();
             renderGrid();
             renderPlayers();
             renderLog();
-            renderTargets();
+            renderRangeInfo();
+            renderDebugPanel();
 
             const isMyTurn = state.currentTurnId === myId;
             const me = state.players[myId];
             const canAct = isMyTurn && !!me && me.hp > 0 && (me.actionsLeft || 0) > 0;
+            const hasTarget = !!getSelectedTarget();
 
             statusText.textContent = state.started
                 ? (isMyTurn ? `Your turn (${me?.actionsLeft || 0} actions left)` : "Waiting for another player's turn")
@@ -256,7 +499,7 @@
             document.getElementById("rollMoveBtn").disabled = !canAct;
             document.getElementById("fortifyBtn").disabled = !canAct;
             document.getElementById("endTurnBtn").disabled = !isMyTurn;
-            document.getElementById("attackBtn").disabled = !canAct;
+            attackBtn.disabled = !canAct || !hasTarget;
             document.getElementById("upBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
             document.getElementById("downBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
             document.getElementById("leftBtn").disabled = !isMyTurn || !me || me.movePoints <= 0;
@@ -266,6 +509,9 @@
         function renderGrid() {
             gridEl.innerHTML = "";
             gridEl.style.gridTemplateColumns = `repeat(${state.gridW}, 44px)`;
+
+            const me = getMe();
+            const selectedTargetId = targetSelect.value;
 
             for (let y = 0; y < state.gridH; y++) {
                 for (let x = 0; x < state.gridW; x++) {
@@ -277,10 +523,30 @@
                         (p) => p.hp > 0 && p.x === x && p.y === y
                     );
 
+                    if (
+                        me &&
+                        me.hp > 0 &&
+                        me.firepower > 0 &&
+                        (x !== me.x || y !== me.y) &&
+                        !playerHere &&
+                        manhattanDistance(me, { x, y }) <= me.firepower
+                    ) {
+                        cell.classList.add("rangeCell");
+                    }
+
                     if (playerHere) {
                         cell.classList.add("boat");
                         if (playerHere.id === myId) cell.classList.add("me");
                         if (playerHere.hp <= 0) cell.classList.add("dead");
+                        if (me && playerHere.id !== myId) {
+                            const inRange = manhattanDistance(me, playerHere) <= (me.firepower || 0);
+                            if (inRange) {
+                                cell.classList.add("rangeEnemyInRange");
+                            } else if (playerHere.id === selectedTargetId) {
+                                cell.classList.add("rangeEnemyOut");
+                            }
+                        }
+                        if (playerHere.id === selectedTargetId) cell.classList.add("selectedTarget");
                         cell.innerHTML = `
               <div>
                 <div>${escapeHtml(playerHere.name)}</div>
@@ -325,17 +591,164 @@
         }
 
         function renderTargets() {
-            const targetSelect = document.getElementById("targetSelect");
+            const previousValue = targetSelect.value;
             targetSelect.innerHTML = "";
+
+            const me = getMe();
+            const optionIds = [];
 
             Object.values(state.players)
                 .filter((p) => p.id !== myId && p.hp > 0)
                 .forEach((p) => {
                     const opt = document.createElement("option");
+                    const distance = me ? manhattanDistance(me, p) : null;
                     opt.value = p.id;
-                    opt.textContent = `${p.name} (${p.boatName || "No boat"})`;
+                    opt.textContent = distance === null
+                        ? `${p.name} (${p.boatName || "No boat"})`
+                        : `${p.name} (${p.boatName || "No boat"}) - ${distance} away`;
                     targetSelect.appendChild(opt);
+                    optionIds.push(p.id);
                 });
+
+            if (optionIds.length === 0) {
+                const opt = document.createElement("option");
+                opt.value = "";
+                opt.textContent = "No targets available";
+                targetSelect.appendChild(opt);
+                return;
+            }
+
+            if (optionIds.includes(previousValue)) {
+                targetSelect.value = previousValue;
+            }
+        }
+
+        function renderRangeInfo() {
+            const me = getMe();
+            const target = getSelectedTarget();
+
+            if (!me) {
+                rangeText.textContent = "Max range: -";
+                return;
+            }
+
+            const maxRange = Math.max(0, Number(me.firepower) || 0);
+            if (!target) {
+                rangeText.textContent = `Max range: ${maxRange} tiles.`;
+                return;
+            }
+
+            const distance = manhattanDistance(me, target);
+            rangeText.textContent = `Max range: ${maxRange} tiles. ${target.name} is ${distance} away (${distance <= maxRange ? "in range" : "out of range"}).`;
+        }
+
+        function renderDebugPanel(forceSync = false) {
+            const debugState = state?.debug;
+            if (!debugState?.enabled) {
+                debugMenuOpen = false;
+                debugOverlay.classList.add("hidden");
+                return;
+            }
+
+            syncDebugPlayerOptions();
+            syncDebugPlayerEditor(forceSync);
+            debugStatusText.textContent = `Press dbg to toggle this menu. Queued d6: ${formatRiggedDice(debugState.riggedD6)} | Queued d20: ${formatRiggedDice(debugState.riggedD20)}`;
+            debugOverlay.classList.toggle("hidden", !debugMenuOpen);
+        }
+
+        function syncDebugPlayerOptions() {
+            const previousValue = debugPlayerSelect.value;
+            debugPlayerSelect.innerHTML = "";
+
+            const players = Object.values(state?.players || {});
+            players.forEach((player) => {
+                const opt = document.createElement("option");
+                opt.value = player.id;
+                opt.textContent = `${player.name}${player.id === myId ? " (You)" : ""}`;
+                debugPlayerSelect.appendChild(opt);
+            });
+
+            if (players.length === 0) return;
+
+            const defaultValue = previousValue && state.players[previousValue]
+                ? previousValue
+                : (state.players[myId] ? myId : players[0].id);
+            debugPlayerSelect.value = defaultValue;
+        }
+
+        function syncDebugPlayerEditor(forceSync = false) {
+            const playerId = debugPlayerSelect.value;
+            const player = playerId ? state?.players?.[playerId] : null;
+            if (!player) return;
+
+            const activeElement = document.activeElement;
+            const isEditingInput = activeElement && debugOverlay.contains(activeElement) && activeElement.tagName === "INPUT";
+            if (!forceSync && isEditingInput && debugLoadedPlayerId === player.id) {
+                return;
+            }
+
+            setInputValue("debugArmorInput", player.armor);
+            setInputValue("debugSpeedInput", player.speed);
+            setInputValue("debugFirepowerInput", player.firepower);
+            setInputValue("debugAcInput", player.ac);
+            setInputValue("debugMaxHpInput", player.maxHp);
+            setInputValue("debugHpInput", player.hp);
+            setInputValue("debugShieldInput", player.shield);
+            setInputValue("debugMovePointsInput", player.movePoints);
+            setInputValue("debugActionsInput", player.actionsLeft);
+            setInputValue("debugXInput", player.x);
+            setInputValue("debugYInput", player.y);
+            debugLoadedPlayerId = player.id;
+        }
+
+        function getMe() {
+            return state?.players?.[myId] || null;
+        }
+
+        function getSelectedTarget() {
+            const targetId = targetSelect.value;
+            if (!targetId) return null;
+            return state?.players?.[targetId] || null;
+        }
+
+        function manhattanDistance(a, b) {
+            return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+        }
+
+        function emitDebugCommand(payload) {
+            if (!state?.debug?.enabled) return;
+            socket.emit("debugCommand", payload);
+        }
+
+        function emitDebugPlayerCommand(type) {
+            const playerId = debugPlayerSelect.value;
+            if (!playerId) return;
+            emitDebugCommand({ type, playerId });
+        }
+
+        function addDebugUpdate(updates, key, inputId) {
+            const value = readNumericInput(inputId);
+            if (value !== undefined) {
+                updates[key] = value;
+            }
+        }
+
+        function readNumericInput(inputId) {
+            const input = document.getElementById(inputId);
+            const value = input.value.trim();
+            if (value === "") return undefined;
+
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) return undefined;
+            return Math.trunc(parsed);
+        }
+
+        function setInputValue(inputId, value) {
+            document.getElementById(inputId).value = value ?? "";
+        }
+
+        function formatRiggedDice(values) {
+            return values.length > 0 ? values.join(", ") : "none";
         }
 
         function escapeHtml(str) {
